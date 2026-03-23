@@ -1,0 +1,101 @@
+{
+  "config": {
+    "region": "us-east-1",
+    "model": "moonshotai.kimi-k2.5",
+    "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1",
+    "cache_salt": "default-tenant",
+    "timestamp": "2026-03-23 08:56:07 UTC"
+  },
+  "test_1_no_cache": [
+    {
+      "question": 1,
+      "elapsed_sec": 1.839,
+      "prompt_tokens": 548,
+      "completion_tokens": 200,
+      "total_tokens": 748,
+      "usage_raw": "CompletionUsage(completion_tokens=200, prompt_tokens=548, total_tokens=748, completion_tokens_details=None, prompt_tokens_details=None)"
+    },
+    {
+      "question": 2,
+      "elapsed_sec": 2.019,
+      "prompt_tokens": 544,
+      "completion_tokens": 200,
+      "total_tokens": 744,
+      "usage_raw": "CompletionUsage(completion_tokens=200, prompt_tokens=544, total_tokens=744, completion_tokens_details=None, prompt_tokens_details=None)"
+    },
+    {
+      "question": 3,
+      "elapsed_sec": 1.912,
+      "prompt_tokens": 545,
+      "completion_tokens": 200,
+      "total_tokens": 745,
+      "usage_raw": "CompletionUsage(completion_tokens=200, prompt_tokens=545, total_tokens=745, completion_tokens_details=None, prompt_tokens_details=None)"
+    }
+  ],
+  "test_2_with_cache": [
+    {
+      "question": 1,
+      "elapsed_sec": 1.939,
+      "prompt_tokens": 548,
+      "completion_tokens": 200,
+      "total_tokens": 748,
+      "cache_salt": "default-tenant",
+      "usage_raw": "CompletionUsage(completion_tokens=200, prompt_tokens=548, total_tokens=748, completion_tokens_details=None, prompt_tokens_details=None)"
+    },
+    {
+      "question": 2,
+      "elapsed_sec": 2.031,
+      "prompt_tokens": 544,
+      "completion_tokens": 200,
+      "total_tokens": 744,
+      "cache_salt": "default-tenant",
+      "usage_raw": "CompletionUsage(completion_tokens=200, prompt_tokens=544, total_tokens=744, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=512))"
+    },
+    {
+      "question": 3,
+      "elapsed_sec": 2.107,
+      "prompt_tokens": 545,
+      "completion_tokens": 200,
+      "total_tokens": 745,
+      "cache_salt": "default-tenant",
+      "usage_raw": "CompletionUsage(completion_tokens=200, prompt_tokens=545, total_tokens=745, completion_tokens_details=None, prompt_tokens_details=None)"
+    }
+  ],
+  "test_3_rapid_fire": [
+    {
+      "round": 1,
+      "elapsed_sec": 1.448,
+      "prompt_tokens": 537,
+      "completion_tokens": 150,
+      "usage_raw": "CompletionUsage(completion_tokens=150, prompt_tokens=537, total_tokens=687, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=512))"
+    },
+    {
+      "round": 2,
+      "elapsed_sec": 2.384,
+      "prompt_tokens": 537,
+      "completion_tokens": 150,
+      "usage_raw": "CompletionUsage(completion_tokens=150, prompt_tokens=537, total_tokens=687, completion_tokens_details=None, prompt_tokens_details=None)"
+    },
+    {
+      "round": 3,
+      "elapsed_sec": 1.693,
+      "prompt_tokens": 537,
+      "completion_tokens": 150,
+      "usage_raw": "CompletionUsage(completion_tokens=150, prompt_tokens=537, total_tokens=687, completion_tokens_details=None, prompt_tokens_details=None)"
+    },
+    {
+      "round": 4,
+      "elapsed_sec": 1.814,
+      "prompt_tokens": 537,
+      "completion_tokens": 150,
+      "usage_raw": "CompletionUsage(completion_tokens=150, prompt_tokens=537, total_tokens=687, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=512))"
+    },
+    {
+      "round": 5,
+      "elapsed_sec": 2.271,
+      "prompt_tokens": 537,
+      "completion_tokens": 150,
+      "usage_raw": "CompletionUsage(completion_tokens=150, prompt_tokens=537, total_tokens=687, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=512))"
+    }
+  ]
+}
