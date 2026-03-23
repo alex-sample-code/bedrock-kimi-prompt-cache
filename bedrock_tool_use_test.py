@@ -892,5 +892,558 @@ def main():
     print(f"\n💾 完整结果已保存: {outfile}")
 
 
-if __name__ == "__main__":
+
+# ============================================================
+# 多轮对话测试
+# ============================================================
+
+# 模拟多轮对话场景：卖家连续操作，上下文逐步积累
+MULTI_TURN_CONVERSATION = [
+    {
+        "role": "user",
+        "content": "你好，我是店铺管理员，帮我看看现在店铺的整体情况"
+    },
+    {
+        "role": "assistant",
+        "content": """好的！我来帮您了解一下店铺的整体情况。
+
+根据当前数据，您的店铺"TechStyle 数码生活馆"运营状况如下：
+
+📊 **本月运营概览**
+- 本月GMV: ¥2,847,560（同比+23%）
+- 订单数: 18,934单
+- 平均客单价: ¥150.4
+- 退货率: 3.2%
+- 复购率: 28%
+
+🏆 **热销TOP3**
+1. SKU-012 WiFi智能插座 - 月销5,600
+2. SKU-014 iPhone手机壳 - 月销4,500
+3. SKU-008 智能LED灯泡 - 月销3,400
+
+⚠️ **库存预警**
+- SKU-010 扫地机器人 库存仅89台
+- SKU-009 智能门铃 库存234台
+
+📅 **近期促销**
+- 3月25-31日：春季焕新季，满200减30
+
+请问您想先处理哪方面的事务？"""
+    },
+    {
+        "role": "user",
+        "content": "库存预警的那两个商品，先帮我看看扫地机器人的详细信息"
+    },
+    {
+        "role": "assistant",
+        "content": None,  # 这里期望触发 get_product_detail(sku="SKU-010")
+        "expected_tool": "get_product_detail",
+        "tool_result": {
+            "sku": "SKU-010",
+            "name": "扫地机器人 激光导航 自动集尘",
+            "price": 1999.00,
+            "compare_at_price": 2999.00,
+            "cost_price": 1200.00,
+            "inventory": 89,
+            "category": "智能家居",
+            "status": "active",
+            "monthly_sales": 67,
+            "description": "激光LDS导航，4000Pa大吸力，自动集尘站，250ml水箱湿拖，App远程控制，多层地图记忆，预约清扫",
+            "weight": 4.5,
+            "images": ["https://img.example.com/sku010-1.jpg", "https://img.example.com/sku010-2.jpg"],
+            "tags": ["智能家居", "扫地机", "激光导航", "自动集尘"],
+            "created_at": "2025-11-15",
+            "updated_at": "2026-03-20"
+        }
+    },
+    {
+        "role": "assistant",
+        "content": """以下是 SKU-010 扫地机器人的详细信息：
+
+📦 **商品详情**
+- **名称**: 扫地机器人 激光导航 自动集尘
+- **SKU**: SKU-010
+- **分类**: 智能家居
+
+💰 **价格信息**
+- 售价: ¥1,999
+- 原价: ¥2,999（折扣33%）
+- 成本价: ¥1,200
+- 毛利: ¥799（毛利率40%）
+
+📊 **销售数据**
+- 月销量: 67台
+- 当前库存: 89台
+- 按当前销速，库存约可支撑 **1.3个月**
+
+📝 **商品描述**
+激光LDS导航，4000Pa大吸力，自动集尘站，250ml水箱湿拖，App远程控制，多层地图记忆
+
+⚠️ 库存确实偏低，按月销67台计算，大约40天就会卖完。建议尽快补货。需要我帮您补充库存吗？"""
+    },
+    {
+        "role": "user",
+        "content": "对，帮我补300台库存"
+    },
+    {
+        "role": "assistant",
+        "content": None,  # 期望触发 update_inventory(sku="SKU-010", quantity=300, operation="add")
+        "expected_tool": "update_inventory",
+        "tool_result": {
+            "success": True,
+            "sku": "SKU-010",
+            "previous_inventory": 89,
+            "new_inventory": 389,
+            "operation": "add",
+            "quantity": 300,
+            "reason": "采购入库"
+        }
+    },
+    {
+        "role": "assistant",
+        "content": """✅ 库存补充成功！
+
+- **商品**: SKU-010 扫地机器人
+- **操作**: 补充入库 +300台
+- **之前库存**: 89台
+- **现在库存**: 389台
+- **预计可售**: 约5.8个月
+
+库存已经充足了。还需要处理智能门铃 SKU-009 的库存吗？"""
+    },
+    {
+        "role": "user",
+        "content": "智能门铃也补200台。另外春季焕新季快到了，我想把几个热销品的价格调一下，SKU-012 智能插座从29降到24.9做引流"
+    },
+    {
+        "role": "assistant",
+        "content": None,  # 期望触发 update_inventory(sku="SKU-009", quantity=200, operation="add")
+        "expected_tool": "update_inventory",
+        "description": "Round 8: 用户一句话里有两个操作（补库存+改价格），看模型能不能先处理第一个",
+        "tool_result": {
+            "success": True,
+            "sku": "SKU-009",
+            "previous_inventory": 234,
+            "new_inventory": 434,
+            "operation": "add",
+            "quantity": 200,
+            "reason": "采购入库"
+        }
+    },
+    {
+        "role": "assistant",
+        "content": """✅ 智能门铃库存补充成功！
+
+- **SKU-009**: 234 → 434台（+200）
+
+接下来处理价格调整，帮您把 SKU-012 WiFi智能插座从29元降到24.9元。"""
+    },
+    {
+        "role": "user",
+        "content": "对，改吧"
+    },
+    {
+        "role": "assistant",
+        "content": None,  # 期望触发 set_product_price(sku="SKU-012", price=24.9)
+        "expected_tool": "set_product_price",
+        "tool_result": {
+            "success": True,
+            "sku": "SKU-012",
+            "previous_price": 29.00,
+            "new_price": 24.9,
+            "compare_at_price": 49.00
+        }
+    },
+    {
+        "role": "assistant",
+        "content": """✅ 价格调整完成！
+
+- **SKU-012 WiFi智能插座**
+- 售价: ¥29 → ¥24.9
+- 原价: ¥49（折扣力度 49%→51%）
+- 降幅: ¥4.1（降14%）
+
+春季焕新季的引流价已设好。还需要调整其他商品的价格吗？"""
+    },
+    {
+        "role": "user",
+        "content": "再帮我看看上周各品类的销售数据，我要对比一下哪个品类表现好"
+    },
+    {
+        "role": "assistant",
+        "content": None,  # 期望触发 get_sales_analytics
+        "expected_tool": "get_sales_analytics",
+        "tool_result": {
+            "period": {"start": "2026-03-16", "end": "2026-03-22"},
+            "by_category": [
+                {"category": "电子产品", "revenue": 487650, "orders": 3245, "units": 4120, "avg_order": 150.3},
+                {"category": "智能家居", "revenue": 312400, "orders": 4560, "units": 6780, "avg_order": 68.5},
+                {"category": "时尚配件", "revenue": 198500, "orders": 3890, "units": 5430, "avg_order": 51.0},
+                {"category": "运动户外", "revenue": 156200, "orders": 1230, "units": 1560, "avg_order": 127.0},
+                {"category": "生活日用", "revenue": 134800, "orders": 2670, "units": 3890, "avg_order": 50.5}
+            ],
+            "total_revenue": 1289550,
+            "total_orders": 15595
+        }
+    },
+    {
+        "role": "assistant",
+        "content": """📊 **上周销售数据（3/16 - 3/22）按品类分析**
+
+| 品类 | 销售额 | 订单数 | 销量 | 客单价 |
+|------|--------|--------|------|--------|
+| 电子产品 | ¥487,650 | 3,245 | 4,120 | ¥150.3 |
+| 智能家居 | ¥312,400 | 4,560 | 6,780 | ¥68.5 |
+| 时尚配件 | ¥198,500 | 3,890 | 5,430 | ¥51.0 |
+| 运动户外 | ¥156,200 | 1,230 | 1,560 | ¥127.0 |
+| 生活日用 | ¥134,800 | 2,670 | 3,890 | ¥50.5 |
+
+**合计**: 销售额 ¥1,289,550 / 订单 15,595
+
+💡 **分析**
+- 电子产品销售额最高，客单价也最高(¥150)
+- 智能家居订单量最多，是流量担当
+- 运动户外客单价高(¥127)但订单量少，可以考虑加大推广
+
+需要我做更详细的分析吗？"""
+    },
+    {
+        "role": "user",
+        "content": "运动户外品类订单少，我想上几个新品试试。帮我创建一个新商品：户外折叠露营椅，铝合金材质，承重150kg，价格159，库存800，分类运动户外"
+    },
+    {
+        "role": "assistant",
+        "content": None,  # 期望触发 create_product - 这是在大量上下文积累后的第N轮
+        "expected_tool": "create_product",
+    }
+]
+
+def build_multi_turn_messages(conversation, up_to_index):
+    """构建多轮对话消息列表，到指定索引为止"""
+    messages_openai = []
+    messages_converse = []
+    
+    for i, msg in enumerate(conversation[:up_to_index + 1]):
+        role = msg["role"]
+        content = msg.get("content")
+        
+        if content is None:
+            # This is a turn where we expect tool call - skip it
+            continue
+            
+        if role == "user":
+            messages_openai.append({"role": "user", "content": content})
+            messages_converse.append({"role": "user", "content": [{"text": content}]})
+        elif role == "assistant":
+            messages_openai.append({"role": "assistant", "content": content})
+            messages_converse.append({"role": "assistant", "content": [{"text": content}]})
+    
+    return messages_openai, messages_converse
+
+
+def test_kimi_multi_turn(client, messages_openai, test_name):
+    """测试 Kimi 多轮对话中的 tool use"""
+    full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages_openai
+    
+    start = time.time()
+    try:
+        response = client.chat.completions.create(
+            model=KIMI_MODEL,
+            messages=full_messages,
+            tools=TOOLS_OPENAI,
+            tool_choice="auto",
+            max_tokens=MAX_TOKENS,
+        )
+        elapsed = time.time() - start
+        choice = response.choices[0]
+        
+        tool_calls = []
+        if choice.message.tool_calls:
+            for tc in choice.message.tool_calls:
+                tool_calls.append({
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments[:200]
+                })
+        
+        content = choice.message.content or ""
+        return {
+            "model": "Kimi K2.5",
+            "test": test_name,
+            "finish_reason": choice.finish_reason,
+            "has_tool_use": len(tool_calls) > 0,
+            "tool_calls": tool_calls,
+            "content_preview": content[:300],
+            "elapsed_sec": round(elapsed, 3),
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+            "total_tokens": response.usage.total_tokens,
+            "error": None
+        }
+    except Exception as e:
+        elapsed = time.time() - start
+        return {
+            "model": "Kimi K2.5",
+            "test": test_name,
+            "finish_reason": "ERROR",
+            "has_tool_use": False,
+            "tool_calls": [],
+            "content_preview": "",
+            "elapsed_sec": round(elapsed, 3),
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "error": str(e)[:300]
+        }
+
+
+def test_claude_multi_turn(bedrock_client, messages_converse, test_name):
+    """测试 Claude 多轮对话中的 tool use"""
+    system_prompt = [{"text": SYSTEM_PROMPT}]
+    
+    start = time.time()
+    try:
+        response = bedrock_client.converse(
+            modelId=CLAUDE_MODEL,
+            messages=messages_converse,
+            system=system_prompt,
+            toolConfig=TOOLS_CONVERSE,
+            inferenceConfig={"maxTokens": MAX_TOKENS}
+        )
+        elapsed = time.time() - start
+        
+        stop_reason = response.get("stopReason", "unknown")
+        output = response.get("output", {}).get("message", {})
+        content_blocks = output.get("content", [])
+        
+        tool_calls = []
+        text_content = ""
+        for block in content_blocks:
+            if "toolUse" in block:
+                tu = block["toolUse"]
+                tool_calls.append({
+                    "name": tu["name"],
+                    "arguments": json.dumps(tu.get("input", {}), ensure_ascii=False)[:200]
+                })
+            if "text" in block:
+                text_content += block["text"]
+        
+        usage = response.get("usage", {})
+        return {
+            "model": "Claude Sonnet 4",
+            "test": test_name,
+            "finish_reason": stop_reason,
+            "has_tool_use": len(tool_calls) > 0,
+            "tool_calls": tool_calls,
+            "content_preview": text_content[:300],
+            "elapsed_sec": round(elapsed, 3),
+            "prompt_tokens": usage.get("inputTokens", 0),
+            "completion_tokens": usage.get("outputTokens", 0),
+            "total_tokens": usage.get("inputTokens", 0) + usage.get("outputTokens", 0),
+            "error": None
+        }
+    except Exception as e:
+        elapsed = time.time() - start
+        return {
+            "model": "Claude Sonnet 4",
+            "test": test_name,
+            "finish_reason": "ERROR",
+            "has_tool_use": False,
+            "tool_calls": [],
+            "content_preview": "",
+            "elapsed_sec": round(elapsed, 3),
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "error": str(e)[:300]
+        }
+
+
+# 多轮测试的检查点：哪些轮次期望触发 tool call
+MULTI_TURN_CHECKPOINTS = []
+for i, msg in enumerate(MULTI_TURN_CONVERSATION):
+    if msg.get("content") is None and msg.get("expected_tool"):
+        MULTI_TURN_CHECKPOINTS.append({
+            "index": i,
+            "expected_tool": msg["expected_tool"],
+            "description": msg.get("description", ""),
+            # 上一条 user message
+            "user_message": MULTI_TURN_CONVERSATION[i-1]["content"] if i > 0 else ""
+        })
+
+
+def run_multi_turn_tests():
+    """运行多轮对话测试"""
+    print("\n" + "=" * 100)
+    print("🔄 多轮对话 Tool Use 测试")
+    print("=" * 100)
+    print(f"总对话轮次: {len(MULTI_TURN_CONVERSATION)}")
+    print(f"Tool call 检查点: {len(MULTI_TURN_CHECKPOINTS)} 个")
+    
+    # Init clients
+    api_key = get_bedrock_api_key()
+    kimi_client = OpenAI(api_key=api_key, base_url=KIMI_BASE_URL)
+    bedrock_client = boto3.client("bedrock-runtime", region_name=REGION)
+    
+    all_results = []
+    
+    for cp_idx, checkpoint in enumerate(MULTI_TURN_CHECKPOINTS):
+        idx = checkpoint["index"]
+        expected = checkpoint["expected_tool"]
+        user_msg = checkpoint["user_message"]
+        
+        # 构建到当前检查点的消息
+        messages_openai, messages_converse = build_multi_turn_messages(
+            MULTI_TURN_CONVERSATION, idx
+        )
+        
+        turn_num = len(messages_openai)
+        test_name = f"turn{turn_num}_{expected}"
+        
+        print(f"\n{'─'*80}")
+        print(f"检查点 {cp_idx+1}/{len(MULTI_TURN_CHECKPOINTS)}: {test_name}")
+        print(f"对话轮次: {turn_num} 条消息（{turn_num//2+1} 轮）")
+        print(f"用户消息: {user_msg[:80]}...")
+        print(f"期望 tool: {expected}")
+        if checkpoint["description"]:
+            print(f"说明: {checkpoint['description']}")
+        
+        # Test Kimi
+        print(f"\n  🌙 Kimi K2.5...")
+        kimi_result = test_kimi_multi_turn(kimi_client, messages_openai, test_name)
+        kimi_result["expected_tool"] = expected
+        kimi_result["turn_count"] = turn_num
+        kimi_result["checkpoint"] = cp_idx + 1
+        all_results.append(kimi_result)
+        
+        status = "✅" if kimi_result["has_tool_use"] else "❌"
+        tool_name = kimi_result["tool_calls"][0]["name"] if kimi_result["tool_calls"] else "-"
+        print(f"     {status} finish={kimi_result['finish_reason']}, tool={tool_name}, "
+              f"tokens={kimi_result['prompt_tokens']}+{kimi_result['completion_tokens']}, "
+              f"time={kimi_result['elapsed_sec']}s")
+        if not kimi_result["has_tool_use"] and kimi_result["content_preview"]:
+            print(f"     content: {kimi_result['content_preview'][:150]}")
+        
+        time.sleep(1)
+        
+        # Test Claude
+        print(f"\n  🤖 Claude Sonnet 4...")
+        claude_result = test_claude_multi_turn(bedrock_client, messages_converse, test_name)
+        claude_result["expected_tool"] = expected
+        claude_result["turn_count"] = turn_num
+        claude_result["checkpoint"] = cp_idx + 1
+        all_results.append(claude_result)
+        
+        status = "✅" if claude_result["has_tool_use"] else "❌"
+        tool_name = claude_result["tool_calls"][0]["name"] if claude_result["tool_calls"] else "-"
+        print(f"     {status} finish={claude_result['finish_reason']}, tool={tool_name}, "
+              f"tokens={claude_result['prompt_tokens']}+{claude_result['completion_tokens']}, "
+              f"time={claude_result['elapsed_sec']}s")
+        if not claude_result["has_tool_use"] and claude_result["content_preview"]:
+            print(f"     content: {claude_result['content_preview'][:150]}")
+        
+        time.sleep(1)
+    
+    # Print summary table
+    print("\n" + "=" * 120)
+    print("📊 多轮对话 Tool Use 对比结果")
+    print("=" * 120)
+    
+    header = f"{'检查点':<8} {'轮次':<6} {'期望tool':<22} {'模型':<16} {'stop_reason':<14} {'tool?':<7} {'实际tool':<22} {'input_tk':<10} {'耗时(s)':<10}"
+    print(header)
+    print("-" * 120)
+    
+    for cp_idx in range(len(MULTI_TURN_CHECKPOINTS)):
+        kimi_r = all_results[cp_idx * 2]
+        claude_r = all_results[cp_idx * 2 + 1]
+        
+        for r in [kimi_r, claude_r]:
+            tool_name = r["tool_calls"][0]["name"] if r["tool_calls"] else "-"
+            has_tool = "✅" if r["has_tool_use"] else "❌"
+            err = " ⚠️" if r["error"] else ""
+            match = " ✓" if (r["tool_calls"] and r["tool_calls"][0]["name"] == r["expected_tool"]) else ""
+            print(f"  #{r['checkpoint']:<6} {r['turn_count']:<6} {r['expected_tool']:<22} {r['model']:<16} "
+                  f"{r['finish_reason']:<14} {has_tool:<7} {tool_name:<22} {r['prompt_tokens']:<10} {r['elapsed_sec']:<10}{err}{match}")
+        print("-" * 120)
+    
+    # Summary
+    kimi_results = [r for r in all_results if r["model"] == "Kimi K2.5"]
+    claude_results = [r for r in all_results if r["model"] == "Claude Sonnet 4"]
+    
+    kimi_correct = sum(1 for r in kimi_results if r["tool_calls"] and r["tool_calls"][0]["name"] == r["expected_tool"])
+    claude_correct = sum(1 for r in claude_results if r["tool_calls"] and r["tool_calls"][0]["name"] == r["expected_tool"])
+    
+    print(f"\n📈 多轮对话汇总:")
+    print(f"  Kimi K2.5:       {kimi_correct}/{len(kimi_results)} 正确触发预期 tool")
+    print(f"  Claude Sonnet 4: {claude_correct}/{len(claude_results)} 正确触发预期 tool")
+    
+    # Show Kimi failures
+    kimi_fails = [r for r in kimi_results if not r["has_tool_use"] or 
+                  (r["tool_calls"] and r["tool_calls"][0]["name"] != r["expected_tool"])]
+    if kimi_fails:
+        print(f"\n🔍 Kimi 失败用例:")
+        for r in kimi_fails:
+            print(f"  [{r['test']}] turn={r['turn_count']}, finish={r['finish_reason']}, "
+                  f"tokens={r['prompt_tokens']}")
+            if r["content_preview"]:
+                print(f"    content: {r['content_preview'][:200]}")
+    
+    return all_results
+
+
+# ============================================================
+# 更新 main 函数
+# ============================================================
+def main_with_multi_turn():
+    """完整测试：单轮 + 多轮"""
+    # 先跑原有的单轮测试
     main()
+    
+    # 再跑多轮测试
+    multi_results = run_multi_turn_tests()
+    
+    # 保存多轮结果
+    output = {
+        "config": {
+            "region": REGION,
+            "kimi_model": KIMI_MODEL,
+            "claude_model": CLAUDE_MODEL,
+            "max_tokens": MAX_TOKENS,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+            "test_type": "multi_turn",
+            "total_turns": len(MULTI_TURN_CONVERSATION),
+            "checkpoints": len(MULTI_TURN_CHECKPOINTS),
+        },
+        "results": multi_results
+    }
+    outfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bedrock_tool_use_multi_turn_results.json")
+    with open(outfile, "w") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+    print(f"\n💾 多轮测试结果已保存: {outfile}")
+
+
+if __name__ == "__main__":
+    import sys
+    if "--multi" in sys.argv:
+        main_with_multi_turn()
+    elif "--multi-only" in sys.argv:
+        # Init and run multi-turn only
+        print("🚀 Bedrock 多轮对话 Tool Use 对比测试")
+        print(f"   Kimi: {KIMI_MODEL}")
+        print(f"   Claude: {CLAUDE_MODEL}")
+        multi_results = run_multi_turn_tests()
+        output = {
+            "config": {
+                "region": REGION,
+                "kimi_model": KIMI_MODEL,
+                "claude_model": CLAUDE_MODEL,
+                "max_tokens": MAX_TOKENS,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+            },
+            "results": multi_results
+        }
+        outfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bedrock_tool_use_multi_turn_results.json")
+        with open(outfile, "w") as f:
+            json.dump(output, f, ensure_ascii=False, indent=2)
+        print(f"\n💾 结果已保存: {outfile}")
+    else:
+        main()
