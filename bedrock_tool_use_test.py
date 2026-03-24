@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import json
+import re
 import boto3
 from openai import OpenAI
 
@@ -24,6 +25,51 @@ def get_bedrock_api_key():
     credentials = session.get_credentials().get_frozen_credentials()
     generator = BedrockTokenGenerator()
     return generator.get_token(credentials=credentials, region=REGION)
+
+
+
+# ============================================================
+# Workaround: 预处理消息修复 Kimi K2.5 兼容性
+# ============================================================
+def preprocess_messages(messages):
+    """预处理消息列表，修复 Kimi K2.5 在第三方推理引擎上的兼容性问题。
+
+    1. tool_call_id 重命名为 functions.{func_name}:{idx} 格式
+    2. assistant 空 content 替换为 " "
+    """
+    # 收集所有 tool_call_id 的映射: old_id -> new_id
+    id_map = {}
+    func_counters = {}
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                old_id = tc.get("id", "")
+                fname = tc.get("function", {}).get("name", "unknown")
+                if re.match(r"^functions\.\w+:\d+$", old_id):
+                    id_map[old_id] = old_id
+                    continue
+                idx = func_counters.get(fname, 0)
+                func_counters[fname] = idx + 1
+                id_map[old_id] = f"functions.{fname}:{idx}"
+
+    out = []
+    for msg in messages:
+        msg = dict(msg)
+        if msg.get("role") == "assistant":
+            if not msg.get("content"):
+                msg["content"] = " "
+            if msg.get("tool_calls"):
+                new_tcs = []
+                for tc in msg["tool_calls"]:
+                    tc = dict(tc)
+                    if tc.get("id") in id_map:
+                        tc["id"] = id_map[tc["id"]]
+                    new_tcs.append(tc)
+                msg["tool_calls"] = new_tcs
+        if msg.get("role") == "tool" and msg.get("tool_call_id") in id_map:
+            msg["tool_call_id"] = id_map[msg["tool_call_id"]]
+        out.append(msg)
+    return out
 
 
 # ============================================================
@@ -1054,119 +1100,131 @@ def find_checkpoints(conversation):
 
 
 def main():
-    print("🚀 复现 Kimi K2.5 Tool Use 失败测试")
-    print(f"   Kimi: {KIMI_MODEL}")
-    print(f"   Claude: {CLAUDE_MODEL}")
-    print(f"   目标: 复现 stopReason=end_turn + content 为空")
-    print(f"   策略: 超长 system prompt + 大量多轮对话历史 → input tokens ~10k+")
+    """对比测试: 无修复 vs 有修复 (preprocess_messages)"""
+    print("=" * 80)
+    print("🔴 Kimi K2.5 Tool Use Bug 复现 & Workaround 验证")
+    print("=" * 80)
+    print(f"模型: {KIMI_MODEL}")
+    print(f"目标: 复现 stop + 空 content，并验证 preprocess_messages 修复效果")
     
-    # Init
+    apply_fix = "--fix" in sys.argv
+    runs = 5
+
     api_key = get_bedrock_api_key()
     kimi_client = OpenAI(api_key=api_key, base_url=KIMI_BASE_URL)
-    bedrock_client = boto3.client("bedrock-runtime", region_name=REGION)
     
+    # 使用 checkpoint 2（复现率最高的检查点, ~9.6k tokens）
     checkpoints = find_checkpoints(CONVERSATION_HISTORY)
-    print(f"\n   对话总消息数: {len(CONVERSATION_HISTORY)}")
-    print(f"   检查点数量: {len(checkpoints)}")
+    cp = checkpoints[1]  # cp2_update_inventory
+    conv_slice = CONVERSATION_HISTORY[:cp["index"]]
+    raw_messages = build_messages_for_kimi(conv_slice)
+    fixed_messages = preprocess_messages(raw_messages)
     
-    # 只测试最后几个检查点（上下文最长的）
-    # 以及全部检查点，观察 token 增长和行为变化
-    all_results = []
-    
-    for cp_idx, cp in enumerate(checkpoints):
-        idx = cp["index"]
-        expected = cp["expected_tool"]
+    print(f"检查点: cp2_{cp['expected_tool']} ({len(raw_messages)} messages)")
+    print(f"期望 tool: {cp['expected_tool']}")
+    print()
+
+    # ── Phase 1: 无修复 (raw) ──
+    print("━" * 60)
+    print("📋 Phase 1: 无修复 (原始消息)")
+    print("━" * 60)
+    raw_empty = 0
+    raw_ok = 0
+    for i in range(1, runs + 1):
+        start = time.time()
+        resp = kimi_client.chat.completions.create(
+            model=KIMI_MODEL, messages=raw_messages,
+            tools=TOOLS_OPENAI, tool_choice="auto", max_tokens=MAX_TOKENS,
+        )
+        elapsed = time.time() - start
+        c = resp.choices[0]
+        content_text = c.message.content or ""
+        has_tool = bool(c.message.tool_calls)
+        is_empty = content_text.strip() == "" and not has_tool
         
-        # Build messages up to this checkpoint
-        conv_slice = CONVERSATION_HISTORY[:idx]
-        kimi_messages = build_messages_for_kimi(conv_slice)
-        claude_messages = build_messages_for_claude(conv_slice)
-        
-        test_name = f"cp{cp_idx+1}_{expected}"
-        
-        print(f"\n{'━'*80}")
-        print(f"检查点 {cp_idx+1}/{len(checkpoints)}: {test_name}")
-        print(f"  Kimi 消息数: {len(kimi_messages)} | Claude 消息数: {len(claude_messages)}")
-        print(f"  期望 tool: {expected}")
-        
-        # Test Kimi
-        print(f"\n  🌙 Kimi K2.5...")
-        kimi_r = test_single("kimi", kimi_client, kimi_messages, test_name, "Kimi K2.5")
-        all_results.append(kimi_r)
-        
-        icon = "✅" if kimi_r["has_tool_use"] else "❌"
-        tool_name = kimi_r["tool_calls"][0]["name"] if kimi_r["tool_calls"] else "-"
-        empty_flag = " 🔴EMPTY_CONTENT" if kimi_r["content_is_empty"] and not kimi_r["has_tool_use"] else ""
-        print(f"     {icon} finish={kimi_r['finish_reason']}, tool={tool_name}, "
-              f"tokens={kimi_r['prompt_tokens']}+{kimi_r['completion_tokens']}, "
-              f"time={kimi_r['elapsed_sec']}s{empty_flag}")
-        if not kimi_r["has_tool_use"]:
-            if kimi_r["content_is_empty"]:
-                print(f"     🔴🔴🔴 REPRODUCED! content is empty + no tool_use 🔴🔴🔴")
-            else:
-                print(f"     content: {kimi_r['content_preview'][:200]}")
-        if kimi_r["error"]:
-            print(f"     ❌ error: {kimi_r['error'][:200]}")
-        
-        time.sleep(1)
-        
-        # Test Claude
-        if claude_messages and claude_messages[-1]["role"] == "user":
-            print(f"\n  🤖 Claude Sonnet 4...")
-            claude_r = test_single("claude", bedrock_client, claude_messages, test_name, "Claude Sonnet 4")
-            all_results.append(claude_r)
-            
-            icon = "✅" if claude_r["has_tool_use"] else "❌"
-            tool_name = claude_r["tool_calls"][0]["name"] if claude_r["tool_calls"] else "-"
-            print(f"     {icon} finish={claude_r['finish_reason']}, tool={tool_name}, "
-                  f"tokens={claude_r['prompt_tokens']}+{claude_r['completion_tokens']}, "
-                  f"time={claude_r['elapsed_sec']}s")
-            if claude_r["error"]:
-                print(f"     ❌ error: {claude_r['error'][:200]}")
+        if is_empty:
+            raw_empty += 1
+            flag = "🔴 EMPTY"
+        elif has_tool:
+            raw_ok += 1
+            flag = "✅ TOOL"
         else:
-            print(f"\n  🤖 Claude: skipped (messages don't end with user)")
+            flag = "⚠️  TEXT"
         
-        time.sleep(1)
+        tool_name = c.message.tool_calls[0].function.name if c.message.tool_calls else "-"
+        print(f"  Run {i}/{runs}: {flag}  finish={c.finish_reason:<12} tool={tool_name:<22} "
+              f"tokens={resp.usage.prompt_tokens}+{resp.usage.completion_tokens}  {elapsed:.1f}s")
+        time.sleep(0.5)
     
-    # Summary
-    print(f"\n{'━'*100}")
-    print(f"📊 复现测试结果汇总")
-    print(f"{'━'*100}")
+    print(f"\n  结果: {raw_ok}/{runs} 正确, {raw_empty}/{runs} 空content")
     
-    kimi_results = [r for r in all_results if r["model"] == "Kimi K2.5"]
-    claude_results = [r for r in all_results if r["model"] == "Claude Sonnet 4"]
+    # ── Phase 2: 有修复 (preprocess_messages) ──
+    print()
+    print("━" * 60)
+    print("📋 Phase 2: 已修复 (preprocess_messages)")
+    print("━" * 60)
+    fix_empty = 0
+    fix_ok = 0
+    for i in range(1, runs + 1):
+        start = time.time()
+        resp = kimi_client.chat.completions.create(
+            model=KIMI_MODEL, messages=fixed_messages,
+            tools=TOOLS_OPENAI, tool_choice="auto", max_tokens=MAX_TOKENS,
+        )
+        elapsed = time.time() - start
+        c = resp.choices[0]
+        content_text = c.message.content or ""
+        has_tool = bool(c.message.tool_calls)
+        is_empty = content_text.strip() == "" and not has_tool
+        
+        if is_empty:
+            fix_empty += 1
+            flag = "🔴 EMPTY"
+        elif has_tool:
+            fix_ok += 1
+            flag = "✅ TOOL"
+        else:
+            flag = "⚠️  TEXT"
+        
+        tool_name = c.message.tool_calls[0].function.name if c.message.tool_calls else "-"
+        print(f"  Run {i}/{runs}: {flag}  finish={c.finish_reason:<12} tool={tool_name:<22} "
+              f"tokens={resp.usage.prompt_tokens}+{resp.usage.completion_tokens}  {elapsed:.1f}s")
+        time.sleep(0.5)
     
-    print(f"\n{'检查点':<12} {'模型':<16} {'finish':<14} {'tool?':<8} {'empty?':<8} {'tool名':<22} {'prompt_tk':<10} {'耗时':<8}")
-    print("-" * 100)
-    for r in all_results:
-        tool_name = r["tool_calls"][0]["name"] if r["tool_calls"] else "-"
-        has_tool = "✅" if r["has_tool_use"] else "❌"
-        empty = "🔴YES" if r["content_is_empty"] and not r["has_tool_use"] else "no"
-        print(f"{r['test']:<12} {r['model']:<16} {r['finish_reason']:<14} {has_tool:<8} {empty:<8} {tool_name:<22} {r['prompt_tokens']:<10} {r['elapsed_sec']:<8}")
+    print(f"\n  结果: {fix_ok}/{runs} 正确, {fix_empty}/{runs} 空content")
     
-    # Kimi stats
-    kimi_tool_ok = sum(1 for r in kimi_results if r["has_tool_use"])
-    kimi_empty = sum(1 for r in kimi_results if r["content_is_empty"] and not r["has_tool_use"])
-    print(f"\n📈 Kimi K2.5 汇总: {kimi_tool_ok}/{len(kimi_results)} 正确 tool_use, {kimi_empty} 次空 content")
+    # ── Summary ──
+    print()
+    print("=" * 60)
+    print("📊 对比汇总")
+    print("=" * 60)
+    print(f"  {'模式':<20} {'正确率':<15} {'空content':<15}")
+    print(f"  {'-'*50}")
+    print(f"  {'无修复 (raw)':<20} {raw_ok}/{runs:<14} {raw_empty}/{runs:<14}")
+    print(f"  {'已修复 (preprocess)':<20} {fix_ok}/{runs:<14} {fix_empty}/{runs:<14}")
     
-    if kimi_empty > 0:
-        print(f"\n🔴🔴🔴 成功复现 {kimi_empty} 次 'end_turn + 空 content' 问题！ 🔴🔴🔴")
+    if raw_empty > 0 and fix_empty == 0:
+        print(f"\n  ✅ 修复有效! 空content从 {raw_empty}/{runs} 降到 0/{runs}")
+    elif raw_empty > 0 and fix_empty > 0:
+        print(f"\n  ⚠️  修复部分有效: 空content从 {raw_empty}/{runs} 降到 {fix_empty}/{runs}")
+    elif raw_empty == 0:
+        print(f"\n  ℹ️  本轮未复现空content（概率性问题），建议增加 runs 重试")
     
-    # Save
+    # Save results
     output = {
         "config": {
-            "region": REGION, "kimi_model": KIMI_MODEL, "claude_model": CLAUDE_MODEL,
-            "max_tokens": MAX_TOKENS,
+            "region": REGION, "model": KIMI_MODEL,
+            "max_tokens": MAX_TOKENS, "runs": runs,
+            "checkpoint": f"cp2_{cp['expected_tool']}",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-            "system_prompt_chars": len(SYSTEM_PROMPT),
-            "conversation_messages": len(CONVERSATION_HISTORY),
         },
-        "results": all_results
+        "raw": {"ok": raw_ok, "empty": raw_empty, "total": runs},
+        "fixed": {"ok": fix_ok, "empty": fix_empty, "total": runs},
     }
-    outfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bedrock_tool_use_reproduce_results.json")
+    outfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bedrock_tool_use_results.json")
     with open(outfile, "w") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
-    print(f"\n💾 结果已保存: {outfile}")
+    print(f"\n💾 结果: {outfile}")
 
 
 if __name__ == "__main__":
